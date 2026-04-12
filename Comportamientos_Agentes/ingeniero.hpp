@@ -22,6 +22,9 @@ public:
    */
   ComportamientoIngeniero(unsigned int size = 0) : Comportamiento(size) {
     // Inicializar Variables de Estado
+    last_action = IDLE;
+    tiene_zapatillas = false;
+    giro45Izq = 0;
   }
 
   /**
@@ -66,6 +69,7 @@ public:
    */
   Action ComportamientoIngenieroNivel_0(Sensores sensores);
   
+
   /**
    * @brief Implementación del Nivel 1.
    * @param sensores Datos actuales de los sensores del agente.
@@ -182,7 +186,9 @@ private:
   // =========================================================================
   // VARIABLES DE ESTADO (PUEDEN SER EXTENDIDAS POR EL ALUMNO)
   // =========================================================================
-
+Action last_action;
+bool tiene_zapatillas;
+int giro45Izq;
 };
 
 #endif

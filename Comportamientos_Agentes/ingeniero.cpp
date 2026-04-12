@@ -43,11 +43,78 @@ Action ComportamientoIngeniero::think(Sensores sensores)
   return accion;
 }
 
+/**
+ 
+* @brief Determina la mejor opcion entre las 3 casillas que tiene delante.
+
+* @param i terreno que hay en la posición 1 de superficie (45 izq)
+
+* @param c terreno que hay en la posición 2 de supeficie (justo delante)
+
+* @param d terreno que hay en la posición 3 de supeficie (45 dch)
+
+* @return 2 si es mejor WALK, 1 para TURN_SL y 3 para TURN_SR. O no hay nada interesante.
+*/
+
+int VeoCasillaInteresanteI (char i, char c, char d) {
+if (c == 'U') return 2;
+else if (i == 'U') return 1;
+else if (d == 'U') return 3;
+else if (c == 'C') return 2;
+else if (i == 'C') return 1;
+else if (d == 'C') return 3;
+else return 0;
+}
+
+
 // Niveles iniciales (Comportamientos reactivos simples)
 Action ComportamientoIngeniero::ComportamientoIngenieroNivel_0(Sensores sensores)
 {
-  Action accion = IDLE;
-  return accion;
+Action accion = IDLE;
+ActualizarMapa(sensores);
+
+// Actualizacion de variables de estado
+if (sensores.superficie[0] == 'D') {
+ tiene_zapatillas = true;
+}
+
+// Definicion del comportamiento
+if (sensores.superficie[0] == 'U') { //LLEGUE A 'U' -> se ha cumplido el objetivo -> accion :  NO HACER NADA "idle"
+ return IDLE;
+}
+/*
+else if (sensores.superficie[2] == 'C'){ //se detecto casilla tipo camino 'C' frente -> avanzar
+  accion = WALK; 
+}
+else if (sensores.superficie[1] == 'C'){ //se detecto casilla tipo camino 'C' 45 grados a la izquierda -> girar 45 grados a la izquierda
+  accion = TURN_SL; 
+}
+else if (sensores.superficie[3] == 'C'){ //-> orientar derecha 
+  accion = TURN_SR;
+}
+else {
+  accion = TURN_SL;
+}*/
+int pos = VeoCasillaInteresanteI(sensores.superficie[1],sensores.superficie[2],sensores.superficie[3]);
+switch(pos)
+{
+  case 2:
+    accion = WALK;
+    break;
+  case 1:
+    accion = TURN_SL;
+    break;
+  case 3:
+    accion = TURN_SR;
+    break;
+  default:
+    accion = TURN_SL;
+    break;
+}
+
+
+last_action = accion; 
+return accion;
 }
 
 /**
