@@ -58,20 +58,22 @@ Action ComportamientoIngeniero::think(Sensores sensores)
 * @return 2 si es mejor WALK, 1 para TURN_SL y 3 para TURN_SR. O no hay nada interesante.
 */
 
-int VeoCasillaInteresanteI (char i, char c, char d, bool zap) {
+int VeoCasillaInteresanteI (char i, char c, char d, bool zap, char a_i , char a_c , char a_d) {
+if (a_c != '_') return 0; // si la casilla frente no esta desocupada(vacia) no hagas nada
 if (c == 'U') return 2;
-else if (i == 'U') return 1;
-else if (d == 'U') return 3;
+else if (i == 'U' && a_i == '_') return 1; 
+else if (d == 'U' && a_d == '_') return 3;
 
 else if (!zap){
   if (c == 'D') return 2; // veo casilla zapatillas (tipo 'D') frente -> avanzar
-  else if (i == 'D') return 1;
-  else if (d == 'D') return 3;
+  else if (i == 'D' && a_i == '_') return 1;
+  else if (d == 'D' && a_d == '_') return 3;
 }
 
 if (c == 'C') return 2;
-else if (i == 'C') return 1;
-else if (d == 'C') return 3;
+else if (i == 'C' && a_i == '_') return 1;
+else if (d == 'C' && a_d == '_') return 3;
+
 else return 0;
 }
 
@@ -124,7 +126,11 @@ char i = ViablePorAlturaI (sensores.superficie[1], sensores.cota[1]-sensores.cot
 char c = ViablePorAlturaI (sensores.superficie[2], sensores.cota[2]-sensores.cota[0], tiene_zapatillas);
 char d = ViablePorAlturaI (sensores.superficie[3], sensores.cota[3]-sensores.cota[0], tiene_zapatillas);
 
-int pos = VeoCasillaInteresanteI(i, c, d, tiene_zapatillas);
+char a_i = sensores.agentes[1];
+char a_c = sensores.agentes[2];
+char a_d = sensores.agentes[3];
+
+int pos = VeoCasillaInteresanteI(i, c, d, tiene_zapatillas, a_i, a_c, a_d);
 switch(pos)
 {
   case 2:
@@ -161,10 +167,64 @@ bool ComportamientoIngeniero::es_camino(unsigned char c) const
  * @param sensores Datos actuales de los sensores.
  * @return Acción a realizar.
  */
+
+int CasillaAExplorar(char i, char c, char d, bool zap, char a_i, char a_c, char a_d) {
+    //Evitar choques con otros agentes
+    if (a_c != '_') return 0;
+
+    // 2. Prioridad Máxima: Caminos ('C') y Senderos ('S')
+    bool c_es_via = (c == 'C' || c == 'S');
+    bool i_es_via = (i == 'C' || i == 'S');
+    bool d_es_via = (d == 'C' || d == 'S');
+
+    if (c_es_via) return 2;
+    else if (i_es_via && a_i == '_') return 1;
+    else if (d_es_via && a_d == '_') return 3;
+
+    if (!zap) {
+        if (c == 'D') return 2;
+        else if (i == 'D' && a_i == '_') return 1;
+        else if (d == 'D' && a_d == '_') return 3;
+    }
+
+    if (c == 'H') return 2;
+    else if (i == 'H' && a_i == '_') return 1;
+    else if (d == 'H' && a_d == '_') return 3;
+
+    return 0;
+}
+
+
 Action ComportamientoIngeniero::ComportamientoIngenieroNivel_1(Sensores sensores)
 {
-  // TODO: Implementar comportamiento reactivo para el Nivel 1.
-  return IDLE;
+  Action accion = IDLE;
+  ActualizarMapa(sensores);
+
+  
+  if (sensores.superficie[0] == 'D') tiene_zapatillas = true;
+
+    
+  char i = ViablePorAlturaI(sensores.superficie[1], sensores.cota[1] - sensores.cota[0], tiene_zapatillas);
+  char c = ViablePorAlturaI(sensores.superficie[2], sensores.cota[2] - sensores.cota[0], tiene_zapatillas);
+  char d = ViablePorAlturaI(sensores.superficie[3], sensores.cota[3] - sensores.cota[0], tiene_zapatillas);
+
+  char a_i = sensores.agentes[1];
+  char a_c = sensores.agentes[2];
+  char a_d = sensores.agentes[3];
+
+  int pos = CasillaAExplorar(i, c, d, tiene_zapatillas, a_i, a_c, a_d);
+
+  switch (pos) {
+    case 2: accion = WALK; break;
+    case 1: accion = TURN_SL; break;
+    case 3: accion = TURN_SR; break;
+    default:
+      accion = TURN_SL;  //izquierda
+      break;
+  }
+
+  last_action = accion;
+  return accion;
 }
 
 // Niveles avanzados (Uso de búsqueda)

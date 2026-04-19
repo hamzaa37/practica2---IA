@@ -41,7 +41,8 @@ Action ComportamientoTecnico::think(Sensores sensores) {
 * @return 2 si es mejor WALK, 1 para TURN_SL y 3 para TURN_SR. O no hay nada interesante.
 */
 
-int VeoCasillaInteresanteT (char i, char c, char d) {
+int VeoCasillaInteresanteT (char i, char c, char d,char a_c) {
+if (a_c != '_') return 0;
 if (c == 'U') return 2;
 else if (i == 'U') return 1;
 else if (d == 'U') return 3;
@@ -89,7 +90,9 @@ char i = ViablePorAlturaT (sensores.superficie[1], sensores.cota[1]-sensores.cot
 char c = ViablePorAlturaT (sensores.superficie[2], sensores.cota[2]-sensores.cota[0]);
 char d = ViablePorAlturaT (sensores.superficie[3], sensores.cota[3]-sensores.cota[0]);
 
-int pos = VeoCasillaInteresanteT(i, c, d);
+char a_c = sensores.agentes[2];
+
+int pos = VeoCasillaInteresanteT(i, c, d, a_c);
 switch(pos)
 {
   case 2:
@@ -127,8 +130,51 @@ bool ComportamientoTecnico::es_camino(unsigned char c) const {
  * @param sensores Datos actuales de los sensores.
  * @return Acción a realizar.
  */
+
+
+int CasillaAExplorarT(char i, char c, char d, char a_i, char a_c, char a_d) {
+    if (a_c != '_') return 0;
+
+    bool c_es_via = (c == 'C' || c == 'S');
+    bool i_es_via = (i == 'C' || i == 'S');
+    bool d_es_via = (d == 'C' || d == 'S');
+
+    if (c_es_via) return 2;
+    else if (i_es_via && a_i == '_') return 1;
+    else if (d_es_via && a_d == '_') return 3;
+
+    if (c == 'H') return 2;
+    else if (i == 'H' && a_i == '_') return 1;
+    else if (d == 'H' && a_d == '_') return 3;
+
+    return 0;
+}
+
 Action ComportamientoTecnico::ComportamientoTecnicoNivel_1(Sensores sensores) {
-  return IDLE;
+  Action accion = IDLE;
+  ActualizarMapa(sensores);
+
+  char i = ViablePorAlturaT(sensores.superficie[1], sensores.cota[1] - sensores.cota[0]);
+  char c = ViablePorAlturaT(sensores.superficie[2], sensores.cota[2] - sensores.cota[0]);
+  char d = ViablePorAlturaT(sensores.superficie[3], sensores.cota[3] - sensores.cota[0]);
+
+  char a_i = sensores.agentes[1];
+  char a_c = sensores.agentes[2];
+  char a_d = sensores.agentes[3];
+
+  int pos = CasillaAExplorarT(i, c, d, a_i, a_c, a_d);
+
+  switch (pos) {
+    case 2: accion = WALK; break;
+    case 1: accion = TURN_SL; break;
+    case 3: accion = TURN_SR; break;
+    default:
+      accion = TURN_SR;  // gira a la derecha pq el ingeniero va a la izquierda , y asi maximizamos el numero de casillas descubiertas
+      break;
+  }
+
+  last_action = accion;
+  return accion;
 }
 
 /**
