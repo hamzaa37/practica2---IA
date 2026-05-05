@@ -189,6 +189,9 @@ private:
 Action last_action;
 bool tiene_zapatillas;
 int giro45Izq;
+
+// Almacena las coordenadas por las que ya hemos pasado
+std::set<std::pair<int, int>> visitados;
 };
 
 #endif
