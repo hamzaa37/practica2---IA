@@ -190,8 +190,14 @@ Action last_action;
 bool tiene_zapatillas;
 int giro45Izq;
 
+// nivel 1 :
 // Almacena las coordenadas por las que ya hemos pasado
 std::set<std::pair<int, int>> visitados;
+
+// nivel 2:
+  bool hayPlan = false;       // para saber si ya hemos pensado la ruta
+  std::list<Action> plan;     // para guardar la secuencia de acciones a realizar
 };
+
 
 #endif

@@ -3,6 +3,7 @@
 #include <iostream>
 #include <queue>
 #include <set>
+#include <tuple>
 
 using namespace std;
 
@@ -272,8 +273,178 @@ Action ComportamientoIngeniero::ComportamientoIngenieroNivel_1(Sensores sensores
  * @param sensores Datos actuales de los sensores.
  * @return Acción a realizar.
  */
+
+// =====================================================================
+// ESTRUCTURAS Y FUNCIONES PARA EL BFS (NIVEL 2)
+// =====================================================================
+
+struct Estado {
+    int f;
+    int c;
+    int brujula;
+    bool zapatillas;
+
+    // Operador necesario para que el std::set sepa comparar y ordenar estados
+    bool operator<(const Estado& otro) const {
+    return std::tie(f, c, brujula, zapatillas)
+         < std::tie(otro.f, otro.c, otro.brujula, otro.zapatillas);
+}
+};
+
+// para guardar el estado en el que estamos y las acciones para llegar ahí
+struct Nodo {
+    Estado st;
+    list<Action> secuencia;
+};
+
+// Función auxiliar para saber qué coordenadas hay delante
+void aplicarAvance(int brujula, int &f, int &c) {
+    switch (brujula) {
+        case 0: f--; break;         // N
+        case 1: f--; c++; break;    // NE
+        case 2: c++; break;         // E
+        case 3: f++; c++; break;    // SE
+        case 4: f++; break;         // S
+        case 5: f++; c--; break;    // SW
+        case 6: c--; break;         // W
+        case 7: f--; c--; break;    // NW
+    }
+}
+
+// Función que define por dónde puede pisar el Ingeniero
+bool esTransitableIngeniero(char terreno) {
+    return terreno != 'M' && terreno != 'P' && terreno != 'B';
+}
+
+// ALGORITMO BFS :
+list<Action> BFS_Nivel2(const Estado& inicio, int obj_f, int obj_c, 
+                        const vector<vector<unsigned char>>& mapaR, 
+                        const vector<vector<unsigned char>>& mapaC) {
+    
+    queue<Nodo> abierta;        // Cola de exploración
+    set<Estado> cerrados;       // Memoria de estados ya visitados para no hacer bucles
+
+    abierta.push({inicio, {}});
+    cerrados.insert(inicio);
+
+    while (!abierta.empty()) {
+        Nodo actual = abierta.front();
+        abierta.pop();
+
+        // 1. ¿Hemos llegado a la Belkanita?
+        if (actual.st.f == obj_f && actual.st.c == obj_c) {
+            return actual.secuencia; // ¡Ruta encontrada! Devolvemos el plan.
+        }
+
+        // Movimientos posibles : (hijos)
+        
+        // HIJO A: Girar a la Izquierda (TURN_SL)
+        Estado st_sl = actual.st;
+        st_sl.brujula = (actual.st.brujula + 7) % 8;
+        if (cerrados.find(st_sl) == cerrados.end()) {
+            cerrados.insert(st_sl);
+            Nodo n_sl = actual;
+            n_sl.st = st_sl;
+            n_sl.secuencia.push_back(TURN_SL);
+            abierta.push(n_sl);
+        }
+
+        // HIJO B: Girar a la Derecha (TURN_SR)
+        Estado st_sr = actual.st;
+        st_sr.brujula = (actual.st.brujula + 1) % 8;
+        if (cerrados.find(st_sr) == cerrados.end()) {
+            cerrados.insert(st_sr);
+            Nodo n_sr = actual;
+            n_sr.st = st_sr;
+            n_sr.secuencia.push_back(TURN_SR);
+            abierta.push(n_sr);
+        }
+
+        // HIJO C: Caminar (WALK)
+        Estado st_walk = actual.st;
+        aplicarAvance(st_walk.brujula, st_walk.f, st_walk.c);
+        if (st_walk.f >= 0 && st_walk.f < mapaR.size() && st_walk.c >= 0 && st_walk.c < mapaR[0].size()) {
+            char terreno = mapaR[st_walk.f][st_walk.c];
+            if (esTransitableIngeniero(terreno)) {
+                int cota_origen = mapaC[actual.st.f][actual.st.c];
+                int cota_dest = mapaC[st_walk.f][st_walk.c];
+                int max_desnivel = actual.st.zapatillas ? 2 : 1; 
+                
+                if (abs(cota_dest - cota_origen) <= max_desnivel) {
+                    if (terreno == 'D') st_walk.zapatillas = true; 
+                    if (cerrados.find(st_walk) == cerrados.end()) {
+                        cerrados.insert(st_walk);
+                        Nodo n_walk = actual;
+                        n_walk.st = st_walk;
+                        n_walk.secuencia.push_back(WALK);
+                        abierta.push(n_walk);
+                    }
+                }
+            }
+        }
+        
+        // HIJO D: Saltar (JUMP)
+        Estado st_jump = actual.st;
+        int f_inter = actual.st.f, c_inter = actual.st.c;
+        aplicarAvance(st_jump.brujula, f_inter, c_inter);         // Casilla intermedia
+        st_jump.f = f_inter; st_jump.c = c_inter;
+        aplicarAvance(st_jump.brujula, st_jump.f, st_jump.c);     // Casilla destino (2 pasos)
+
+        if (st_jump.f >= 0 && st_jump.f < mapaR.size() && st_jump.c >= 0 && st_jump.c < mapaR[0].size()) {
+            char terreno_inter = mapaR[f_inter][c_inter];
+            char terreno_dest = mapaR[st_jump.f][st_jump.c];
+            
+            if (esTransitableIngeniero(terreno_inter) && esTransitableIngeniero(terreno_dest)) {
+                int cota_origen = mapaC[actual.st.f][actual.st.c];
+                int cota_inter = mapaC[f_inter][c_inter];
+                int cota_dest = mapaC[st_jump.f][st_jump.c];
+                int max_desnivel = actual.st.zapatillas ? 2 : 1;
+                
+                // Reglas estrictas del JUMP según el guion
+                if (cota_inter <= cota_origen && abs(cota_dest - cota_origen) <= max_desnivel) {
+                    if (terreno_dest == 'D') st_jump.zapatillas = true;
+                    if (cerrados.find(st_jump) == cerrados.end()) {
+                        cerrados.insert(st_jump);
+                        Nodo n_jump = actual;
+                        n_jump.st = st_jump;
+                        n_jump.secuencia.push_back(JUMP);
+                        abierta.push(n_jump);
+                    }
+                }
+            }
+        }
+    }
+    return list<Action>(); // Si el bucle termina y no encuentra ruta, devuelve un plan vacío
+}
+ 
 Action ComportamientoIngeniero::ComportamientoIngenieroNivel_2(Sensores sensores)
 {
+  // 1. Si no tenemos un plan, lo calculamos (Solo entrará aquí en el instante 0)
+  if (!hayPlan) {
+      // Capturamos nuestro estado inicial
+      Estado inicio;
+      inicio.f = sensores.posF;
+      inicio.c = sensores.posC;
+      inicio.brujula = sensores.rumbo;
+      // Comprobamos si salimos encima de unas zapatillas o ya las teníamos
+      inicio.zapatillas = (sensores.superficie[0] == 'D' || tiene_zapatillas);
+
+      // ¡Invocamos a nuestro cerebro BFS!
+      plan = BFS_Nivel2(inicio, sensores.BelPosF, sensores.BelPosC, mapaResultado, mapaCotas);
+      hayPlan = true; 
+      
+      // Funciones visuales (opcionales) para que veas el camino dibujado en el simulador
+      VisualizaPlan({sensores.posF, sensores.posC, sensores.rumbo}, plan);
+  }
+
+  // 2. Ejecutar el plan paso a paso
+  if (!plan.empty()) {
+      Action siguiente_accion = plan.front(); // Miramos la primera acción de la lista
+      plan.pop_front();                       // La tachamos de la libreta
+      return siguiente_accion;                // La ejecutamos
+  }
+
+  // Si la lista está vacía (hemos llegado) o no se encontró ruta, nos quedamos quietos
   return IDLE;
 }
 

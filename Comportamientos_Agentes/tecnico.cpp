@@ -209,7 +209,9 @@ Action ComportamientoTecnico::ComportamientoTecnicoNivel_1(Sensores sensores) {
  * @return Acción a realizar.
  */
 Action ComportamientoTecnico::ComportamientoTecnicoNivel_2(Sensores sensores) {
-  return IDLE;
+// El Técnico no necesita planificar nada en este nivel.
+// Simplemente reutilizamos su instinto de exploración del Nivel 1 para que se aleje de la zona inicial y deje paso libre al Ingeniero. 
+return ComportamientoTecnicoNivel_1(sensores);
 }
 
 /**
