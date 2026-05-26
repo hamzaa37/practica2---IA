@@ -1,8 +1,10 @@
 #include "tecnico.hpp"
 #include "motorlib/util.h"
 #include <iostream>
+#include <map>
 #include <queue>
 #include <set>
+#include <tuple>
 
 using namespace std;
 
@@ -214,14 +216,506 @@ Action ComportamientoTecnico::ComportamientoTecnicoNivel_2(Sensores sensores) {
 return ComportamientoTecnicoNivel_1(sensores);
 }
 
+// =====================================================================
+// ESTRUCTURAS, BFS Y NIVEL E  (Tutorial2_p2_2025_26.pdf)
+// Base para los Niveles 2 y 3 reales de la práctica.
+// =====================================================================
+
+// Siguiendo el tutorial, el estilo del profesor (Tutorial2_p2_2025_26.pdf)
+// Costes energéticos exactos según Guion2_2025_26.pdf, Sección 2.3.5
+// =====================================================================
+
+// Estado del Técnico: posición + orientación + si lleva zapatillas
+struct EstadoT {
+    ubicacion site;
+    bool zapatillas;
+
+    bool operator==(const EstadoT &st) const {
+        return site == st.site && zapatillas == st.zapatillas;
+    }
+    bool operator<(const EstadoT &st) const {
+        if (site.f != st.site.f) return site.f < st.site.f;
+        if (site.c != st.site.c) return site.c < st.site.c;
+        if (site.brujula != st.site.brujula) return site.brujula < st.site.brujula;
+        return zapatillas < st.zapatillas;
+    }
+};
+
+// Nodo para BFS/A*: estado + secuencia de acciones + costes g y f=g+h
+struct NodoT {
+    EstadoT estado;
+    list<Action> secuencia;
+    float g;        // coste acumulado real
+    float f;        // g + h (prioridad)
+
+    bool operator==(const NodoT &node) const {
+        return estado == node.estado;
+    }
+    // operator< para std::set<NodoT> (BFS explorados)
+    bool operator<(const NodoT &node) const {
+        return estado < node.estado;
+    }
+    // operator> para priority_queue (min-heap por f)
+    bool operator>(const NodoT &node) const {
+        return f > node.f;
+    }
+};
+
+// Calcula la casilla a la que llegaría el Técnico al avanzar
+EstadoT NextCasillaTecnico(const EstadoT &st) {
+    EstadoT siguiente = st;
+    switch (st.site.brujula) {
+        case norte:    siguiente.site.f--;                    break;
+        case noreste:  siguiente.site.f--; siguiente.site.c++; break;
+        case este:                         siguiente.site.c++; break;
+        case sureste:  siguiente.site.f++; siguiente.site.c++; break;
+        case sur:      siguiente.site.f++;                    break;
+        case suroeste: siguiente.site.f++; siguiente.site.c--; break;
+        case oeste:                        siguiente.site.c--; break;
+        case noroeste: siguiente.site.f--; siguiente.site.c--; break;
+    }
+    return siguiente;
+}
+
+// Comprueba si el Técnico puede hacer WALK desde st.
+// Reglas (del profesor + guion):
+//   - No puede pisar 'P' ni 'M'
+//   - No puede pisar 'B' sin zapatillas
+//   - Desnivel máximo 1 (zapatillas no amplían altura para el Técnico)
+bool CasillaAccesibleTecnico(const EstadoT &st,
+                              const vector<vector<unsigned char>> &terreno,
+                              const vector<vector<unsigned char>> &altura) {
+    EstadoT next = NextCasillaTecnico(st);
+    // Comprobación de límites (mapa cerrado con precipicios, pero por seguridad)
+    if (next.site.f < 0 || next.site.f >= (int)terreno.size() ||
+        next.site.c < 0 || next.site.c >= (int)terreno[0].size())
+        return false;
+    char t = terreno[next.site.f][next.site.c];
+    bool no_obstaculo   = (t != 'P' && t != 'M');
+    bool bosque_ok      = (t != 'B' || st.zapatillas);
+    bool desnivel_ok    = abs((int)altura[next.site.f][next.site.c] -
+                              (int)altura[st.site.f][st.site.c]) <= 1;
+    return no_obstaculo && bosque_ok && desnivel_ok;
+}
+
+
+// Aplica una acción al estado y devuelve el estado resultante.
+// Si la acción no es aplicable (WALK bloqueado), devuelve el mismo estado.
+EstadoT applyTecnico(Action accion, const EstadoT &st,
+                     const vector<vector<unsigned char>> &terreno,
+                     const vector<vector<unsigned char>> &altura) {
+    EstadoT next = st;
+    switch (accion) {
+        case WALK:
+            if (CasillaAccesibleTecnico(st, terreno, altura)) {
+                next = NextCasillaTecnico(st);
+                // Recoger zapatillas si la casilla destino es 'D'
+                if (terreno[next.site.f][next.site.c] == 'D')
+                    next.zapatillas = true;
+            }
+            break;
+        case TURN_SR:
+            next.site.brujula = (Orientacion)((next.site.brujula + 1) % 8);
+            break;
+        case TURN_SL:
+            next.site.brujula = (Orientacion)((next.site.brujula + 7) % 8);
+            break;
+        default: break;
+    }
+    return next;
+}
+
+// Coste de giro (TURN_SL / TURN_SR): depende del terreno ORIGEN.
+// Guion Tabla TURN: A=5, H=2, S=1, Resto=1.
+float costeTurnoT(char terreno_origen) {
+    switch (terreno_origen) {
+        case 'A': return 5.0f;
+        case 'H': return 2.0f;
+        default:  return 1.0f;
+    }
+}
+
+// Coste de WALK: depende del terreno ORIGEN y la diferencia de cota.
+// Guion Tabla WALK:
+//   A  → base 60,  ajuste +5 sube / -2 baja
+//   H  → base  6,  ajuste +5 sube / -2 baja
+//   S  → base  3,  ajuste +5 sube / -2 baja
+//   Resto (C,D,U,B...) → base 1,  SIN ajuste de altura (+0/-0)
+float costeWalkT(char terreno_origen, int cota_orig, int cota_dest) {
+    float ajuste = 0.0f;
+    switch (terreno_origen) {
+        case 'A':
+            ajuste = (cota_dest > cota_orig) ? 5.0f : (cota_dest < cota_orig ? -2.0f : 0.0f);
+            return 60.0f + ajuste;
+        case 'H':
+            ajuste = (cota_dest > cota_orig) ? 5.0f : (cota_dest < cota_orig ? -2.0f : 0.0f);
+            return 6.0f + ajuste;
+        case 'S':
+            ajuste = (cota_dest > cota_orig) ? 5.0f : (cota_dest < cota_orig ? -2.0f : 0.0f);
+            return 3.0f + ajuste;
+        default:  // C, D, U, B (con zapatillas) — sin ajuste de altura
+            return 1.0f;
+    }
+}
+
+// Heurística admisible: distancia Chebyshev × coste mínimo por paso (1).
+// Todos los costes son >= 1 (mínimo: terreno Resto=1, S bajando = 3-2 = 1).
+float heuristicaT(const EstadoT &st, const EstadoT &fin) {
+    return (float)max(abs(st.site.f - fin.site.f),
+                      abs(st.site.c - fin.site.c));
+}
+
+// ── BFS en Anchura V2 (Nivel E) ──────────────────────────────────────────────
+// Búsqueda en anchura optimizada: frontier como list<NodoT> (FIFO),
+// explored como set<NodoT> (búsqueda en O(log n)).
+// Minimiza número de acciones (instantes), no energía.
+list<Action> B_Anchura_V2(const EstadoT &inicio, const EstadoT &fin,
+                           const vector<vector<unsigned char>> &terreno,
+                           const vector<vector<unsigned char>> &altura) {
+
+    NodoT current_node;
+    current_node.estado    = inicio;
+    current_node.secuencia = {};
+    current_node.g         = 0.0f;
+    current_node.f         = 0.0f;
+
+    list<NodoT> frontier;
+    set<NodoT>  explored;
+
+    bool SolutionFound = (inicio.site.f == fin.site.f &&
+                          inicio.site.c == fin.site.c);
+
+    frontier.push_back(current_node);
+
+    while (!frontier.empty() && !SolutionFound) {
+
+        frontier.pop_front();
+        explored.insert(current_node);
+
+        // Hijo WALK — único que puede alcanzar la solución
+        if (!SolutionFound) {
+            NodoT child_Walk = current_node;
+            EstadoT next = applyTecnico(WALK, current_node.estado, terreno, altura);
+            if (!(next == current_node.estado)) {         // WALK fue aplicable
+                child_Walk.estado = next;
+                if (child_Walk.estado.site.f == fin.site.f &&
+                    child_Walk.estado.site.c == fin.site.c) {
+                    SolutionFound = true;
+                    child_Walk.secuencia.push_back(WALK);
+                    current_node = child_Walk;
+                } else if (explored.find(child_Walk) == explored.end()) {
+                    child_Walk.secuencia.push_back(WALK);
+                    frontier.push_back(child_Walk);
+                }
+            }
+        }
+
+        // Hijo TURN_SR
+        if (!SolutionFound) {
+            NodoT child_SR = current_node;
+            child_SR.estado = applyTecnico(TURN_SR, current_node.estado, terreno, altura);
+            if (explored.find(child_SR) == explored.end()) {
+                child_SR.secuencia.push_back(TURN_SR);
+                frontier.push_back(child_SR);
+            }
+        }
+
+        // Hijo TURN_SL
+        if (!SolutionFound) {
+            NodoT child_SL = current_node;
+            child_SL.estado = applyTecnico(TURN_SL, current_node.estado, terreno, altura);
+            if (explored.find(child_SL) == explored.end()) {
+                child_SL.secuencia.push_back(TURN_SL);
+                frontier.push_back(child_SL);
+            }
+        }
+
+        // Tomar siguiente nodo no explorado de frontier
+        if (!SolutionFound && !frontier.empty()) {
+            current_node = frontier.front();
+            while (!frontier.empty() &&
+                   explored.find(current_node) != explored.end()) {
+                frontier.pop_front();
+                if (!frontier.empty())
+                    current_node = frontier.front();
+            }
+        }
+    }
+
+    if (SolutionFound)
+        return current_node.secuencia;
+    return list<Action>();
+}
+
+/**
+ * @brief Nivel E (ficticio del tutorial): BFS en anchura para llevar al
+ * Técnico a la Belkanita minimizando instantes de simulación.
+ * Sirve de base y demostración para los Niveles 2 y 3 reales.
+ */
+Action ComportamientoTecnico::ComportamientoTecnicoNivel_E(Sensores sensores) {
+    Action accion = IDLE;
+
+    if (!hayPlan) {
+        EstadoT inicio, fin;
+        inicio.site.f      = sensores.posF;
+        inicio.site.c      = sensores.posC;
+        inicio.site.brujula = sensores.rumbo;
+        inicio.zapatillas  = tiene_zapatillas;
+
+        fin.site.f       = sensores.BelPosF;
+        fin.site.c       = sensores.BelPosC;
+        fin.site.brujula = norte;   // irrelevante para condición de parada
+        fin.zapatillas   = false;
+
+        plan = B_Anchura_V2(inicio, fin, mapaResultado, mapaCotas);
+        VisualizaPlan(inicio.site, plan);
+        hayPlan = (plan.size() != 0);
+    }
+
+    if (hayPlan && plan.size() > 0) {
+        accion = plan.front();
+        plan.pop_front();
+    }
+    if (plan.size() == 0) {
+        hayPlan = false;
+    }
+
+    return accion;
+}
+
+// Algoritmo A* para el Técnico (minimiza energía).
+// Usa priority_queue (min-heap por f=g+h) como frontera y
+// set<EstadoT> como explorados — almacena solo estados, no secuencias,
+// para evitar consumo masivo de memoria en mapas grandes.
+// El mapa es completamente conocido (Nivel 3).
+// ── ESTRUCTURA OPTIMIZADA PARA A* (Evita límite de tiempo y empates) ──────────────
+struct NodoAEstrella {
+    EstadoT estado;
+    float g;
+    float f;
+
+    bool operator>(const NodoAEstrella &node) const {
+        if (f == node.f) {
+            // TIE-BREAKER: Si hay empate en 'f', preferimos el nodo con mayor 'g'.
+            // Mayor 'g' significa que hemos avanzado más pasos (menor 'h') y estamos más cerca de la meta.
+            return g < node.g; 
+        }
+        return f > node.f; // min-heap para priority_queue
+    }
+};
+
+// Algoritmo A* para el Técnico optimizado (minimiza energía).
+// Utiliza matrices 1D aplanadas en lugar de 4D para máxima velocidad de caché.
+list<Action> AEstrella_Nivel3(const EstadoT &inicio, const EstadoT &fin,
+                              const vector<vector<unsigned char>> &terreno,
+                              const vector<vector<unsigned char>> &altura) {
+
+    int filas = terreno.size();
+    int columnas = terreno[0].size();
+
+    // Aplanamiento: Fila * Columna * Orientacion(8) * Zapatillas(2)
+    int MAX_STATES = filas * columnas * 8 * 2;
+    
+    // Una única reserva de memoria ultra-rápida (en lugar de miles de sub-vectores)
+    vector<float> g_score(MAX_STATES, 1e9f);
+    vector<pair<EstadoT, Action>> came_from(MAX_STATES);
+
+    // Función lambda para obtener el índice lineal 1D
+    auto get_index = [&](int f, int c, int b, int z) {
+        return (((f * columnas) + c) * 8 + b) * 2 + z;
+    };
+
+    priority_queue<NodoAEstrella, vector<NodoAEstrella>, greater<NodoAEstrella>> frontera;
+
+    NodoAEstrella nodo_inicio;
+    nodo_inicio.estado = inicio;
+    nodo_inicio.g = 0.0f;
+    nodo_inicio.f = heuristicaT(inicio, fin);
+    
+    frontera.push(nodo_inicio);
+    
+    int start_idx = get_index(inicio.site.f, inicio.site.c, inicio.site.brujula, inicio.zapatillas ? 1 : 0);
+    g_score[start_idx] = 0.0f;
+
+    while (!frontera.empty()) {
+        NodoAEstrella current = frontera.top();
+        frontera.pop();
+
+        int f = current.estado.site.f;
+        int c = current.estado.site.c;
+        int b = current.estado.site.brujula;
+        int z = current.estado.zapatillas ? 1 : 0;
+        int curr_idx = get_index(f, c, b, z);
+
+        // Si ya habíamos encontrado una ruta más barata hacia este estado, descartamos rama
+        if (current.g > g_score[curr_idx])
+            continue;
+
+        // Condición de éxito: Llegamos a la Belkanita
+        if (f == fin.site.f && c == fin.site.c) {
+            list<Action> path;
+            EstadoT curr_state = current.estado;
+            
+            // Reconstruimos el camino desde el final hasta el inicio
+            while (!(curr_state == inicio)) {
+                int cf = curr_state.site.f;
+                int cc = curr_state.site.c;
+                int cb = curr_state.site.brujula;
+                int cz = curr_state.zapatillas ? 1 : 0;
+                int c_idx = get_index(cf, cc, cb, cz);
+
+                auto prev = came_from[c_idx];
+                path.push_front(prev.second);
+                curr_state = prev.first;
+            }
+            return path;
+        }
+
+        char t_orig = terreno[f][c];
+        int h_orig = (int)altura[f][c];
+
+        // Expansión de vecinos
+        Action acciones[] = {TURN_SL, TURN_SR, WALK};
+        for (Action act : acciones) {
+            EstadoT next_state = current.estado;
+            float transition_cost = 0.0f;
+
+            if (act == TURN_SL || act == TURN_SR) {
+                next_state = applyTecnico(act, current.estado, terreno, altura);
+                transition_cost = costeTurnoT(t_orig);
+            } else if (act == WALK) {
+                if (CasillaAccesibleTecnico(current.estado, terreno, altura)) {
+                    next_state = NextCasillaTecnico(current.estado);
+                    // Regla: si pisa la casilla 'D', adquiere zapatillas
+                    if (terreno[next_state.site.f][next_state.site.c] == 'D') {
+                        next_state.zapatillas = true;
+                    }
+                    int h_dest = (int)altura[next_state.site.f][next_state.site.c];
+                    
+                    // Solo aplica la lógica de altura (aumento o penalización) a la base del coste 
+                    transition_cost = costeWalkT(t_orig, h_orig, h_dest); 
+                } else {
+                    continue; // Obstáculo, desnivel > 1 o precipicio
+                }
+            }
+
+            float tentative_g = current.g + transition_cost;
+
+            int nf = next_state.site.f;
+            int nc = next_state.site.c;
+            int nb = next_state.site.brujula;
+            int nz = next_state.zapatillas ? 1 : 0;
+            int next_idx = get_index(nf, nc, nb, nz);
+
+            // Si descubrimos una ruta más barata al estado siguiente, la actualizamos
+            if (tentative_g < g_score[next_idx]) {
+                g_score[next_idx] = tentative_g;
+                came_from[next_idx] = {current.estado, act};
+
+                NodoAEstrella child;
+                child.estado = next_state;
+                child.g = tentative_g;
+                child.f = tentative_g + heuristicaT(next_state, fin);
+                frontera.push(child);
+            }
+        }
+    }
+
+    return list<Action>(); // Sin solución (A* exploró todo y no encontró la meta)
+}
+
 /**
  * @brief Comportamiento del técnico para el Nivel 3.
+ * El Técnico es el agente deliberativo: usa A* para llegar a la Belkanita
+ * minimizando el consumo de energía según los costes reales del guion.
+ * El mapa es completamente conocido (constructor con mapa).
  * @param sensores Datos actuales de los sensores.
  * @return Acción a realizar.
  */
+
 Action ComportamientoTecnico::ComportamientoTecnicoNivel_3(Sensores sensores) {
-  return IDLE;
+    Action accion = IDLE;
+
+    // Actualizar zapatillas si el agente acaba de pisarlas
+    if (sensores.superficie[0] == 'D')
+        tiene_zapatillas = true;
+
+    // Detectar desincronización: si la posición real no coincide con la esperada
+    // (ocurre cuando otro agente bloqueó nuestro WALK el turno anterior)
+    if (hayPlan && checkPos) {
+        if (sensores.posF != posEsperada.f ||
+            sensores.posC != posEsperada.c ||
+            sensores.rumbo != posEsperada.brujula) {
+            hayPlan = false;  // replanificar desde la posición real
+        }
+    }
+    checkPos = false;
+
+    if (!hayPlan) {
+        EstadoT inicio, fin;
+        inicio.site.f       = sensores.posF;
+        inicio.site.c       = sensores.posC;
+        inicio.site.brujula = sensores.rumbo;
+        inicio.zapatillas   = tiene_zapatillas;
+
+        fin.site.f       = sensores.BelPosF;
+        fin.site.c       = sensores.BelPosC;
+        fin.site.brujula = norte;
+        fin.zapatillas   = false;
+
+        plan = AEstrella_Nivel3(inicio, fin, mapaResultado, mapaCotas);
+        VisualizaPlan(inicio.site, plan);
+        hayPlan = (plan.size() != 0);
+    }
+
+    if (hayPlan && plan.size() > 0) {
+        accion = plan.front();
+
+        // Si la próxima acción es WALK pero hay un agente directamente delante,
+        // esperamos (IDLE) sin consumir la acción del plan.
+        // El Ingeniero (reactivo) eventualmente se moverá y podremos avanzar.
+        if (accion == WALK && sensores.agentes[2] != '_') {
+            accion = IDLE;
+            checkPos = false;
+            last_action = accion;
+            return accion;
+        }
+  
+        if (accion == WALK && sensores.agentes[2] != '_') {
+            accion = IDLE;
+            checkPos = false; // Detenemos la alerta temporalmente para NO replanificar.
+            last_action = accion;
+            return accion;
+        }
+        plan.pop_front();
+
+
+        // Calcular posición esperada tras ejecutar esta acción
+        ubicacion cur = {sensores.posF, sensores.posC, sensores.rumbo};
+        checkPos = true;
+        switch (accion) {
+            case TURN_SL:
+                posEsperada = {cur.f, cur.c, (Orientacion)((cur.brujula + 7) % 8)};
+                break;
+            case TURN_SR:
+                posEsperada = {cur.f, cur.c, (Orientacion)((cur.brujula + 1) % 8)};
+                break;
+            case WALK:
+                posEsperada = Delante(cur);
+                break;
+            default:
+                checkPos = false;
+                break;
+        }
+    }
+    if (plan.size() == 0)
+        hayPlan = false;
+
+    last_action = accion;
+    return accion;
 }
+
+
 
 /**
  * @brief Comportamiento del técnico para el Nivel 4.
@@ -232,13 +726,152 @@ Action ComportamientoTecnico::ComportamientoTecnicoNivel_4(Sensores sensores) {
   return IDLE;
 }
 
+int ObtenerRumboT(int f_act, int c_act, int f_obj, int c_obj) {
+    if (f_act == f_obj && c_obj > c_act) return 2; 
+    if (f_act == f_obj && c_obj < c_act) return 6; 
+    if (f_obj > f_act && c_act == c_obj) return 4; 
+    if (f_obj < f_act && c_act == c_obj) return 0; 
+    return -1; 
+}
+
+Action GirarHaciaT(int rumbo_actual, int rumbo_objetivo) {
+    int diff = (rumbo_objetivo - rumbo_actual + 8) % 8;
+    if (diff == 0) return IDLE;
+    if (diff <= 4) return TURN_SR;
+    return TURN_SL;
+}
+
+// Clonamos las estructuras de tubería para el Técnico
+struct NodoTuberiaT {
+    int f, c, altura_actual;
+    list<Paso> red;
+};
+
+struct EstadoTuberiaT {
+    int f, c, alteracion;
+    bool operator<(const EstadoTuberiaT& otro) const {
+        return tie(f, c, alteracion) < tie(otro.f, otro.c, otro.alteracion);
+    }
+};
+
+// Generador del plano (BFS idéntico al del Ingeniero)
+list<Paso> ProyectarRedTuberiasTecnico(int inicio_f, int inicio_c, 
+                                const vector<vector<unsigned char>>& mapaR, 
+                                const vector<vector<unsigned char>>& mapaC) {
+    queue<NodoTuberiaT> frontera;
+    set<EstadoTuberiaT> visitados;
+    int altura_inicial = mapaC[inicio_f][inicio_c];
+    int ops[] = {0, 1, -1};
+    
+    for (int op : ops) {
+        if (op == -1 && altura_inicial <= 1) continue;
+        if (op == 1 && altura_inicial >= 9) continue;
+        if (op != 0 && mapaR[inicio_f][inicio_c] == 'A') continue;
+        
+        NodoTuberiaT inicial = {inicio_f, inicio_c, altura_inicial + op, {{inicio_f, inicio_c, op}}};
+        frontera.push(inicial);
+        visitados.insert({inicio_f, inicio_c, op});
+    }
+
+    int df[] = {-1, 1, 0, 0}, dc[] = {0, 0, 1, -1};
+
+    while (!frontera.empty()) {
+        NodoTuberiaT actual = frontera.front();
+        frontera.pop();
+
+        if (mapaR[actual.f][actual.c] == 'U') return actual.red;
+
+        for (int i = 0; i < 4; ++i) {
+            int nf = actual.f + df[i], nc = actual.c + dc[i];
+            if (nf >= 0 && nf < mapaR.size() && nc >= 0 && nc < mapaR[0].size()) {
+                char t = mapaR[nf][nc];
+                if (t != 'M' && t != 'P') {
+                    int c_orig = mapaC[nf][nc];
+                    for (int op : ops) {
+                        if (op == -1 && c_orig <= 1) continue;
+                        if (op == 1 && c_orig >= 9) continue;
+                        if (op != 0 && t == 'A') continue;
+                        
+                        int c_final = c_orig + op;
+                        int caida = actual.altura_actual - c_final;
+                        if (caida == 0 || caida == 1) {
+                            EstadoTuberiaT n_st = {nf, nc, op};
+                            if (visitados.find(n_st) == visitados.end()) {
+                                visitados.insert(n_st);
+                                NodoTuberiaT vecino = {nf, nc, c_final, actual.red};
+                                vecino.red.push_back({nf, nc, op});
+                                frontera.push(vecino);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    return list<Paso>(); 
+}
+
 /**
  * @brief Comportamiento del técnico para el Nivel 5.
  * @param sensores Datos actuales de los sensores.
  * @return Acción a realizar.
  */
-Action ComportamientoTecnico::ComportamientoTecnicoNivel_5(Sensores sensores) {
-  return IDLE;
+Action ComportamientoTecnico::ComportamientoTecnicoNivel_5(Sensores sensores)
+{
+  if (sensores.superficie[0] == 'D') tiene_zapatillas = true;
+    if (!hayPlan) {
+        list<Paso> plan_lista = ProyectarRedTuberiasTecnico(sensores.BelPosF, sensores.BelPosC, mapaResultado, mapaCotas);
+        red_tuberias.assign(plan_lista.begin(), plan_lista.end());
+        tramo_actual = 0;
+        hayPlan = true;
+        plan.clear();
+    }
+
+    if (tramo_actual >= (int)red_tuberias.size() - 1) return IDLE;
+
+    // Objetivo del Técnico: Ocupar el inicio del tramo (nodo i)
+    int target_f = red_tuberias[tramo_actual].fil;
+    int target_c = red_tuberias[tramo_actual].col;
+
+    // ¿ESTAMOS EN POSICIÓN?
+    if (sensores.posF == target_f && sensores.posC == target_c) {
+        plan.clear();
+        
+        // A. Rotar para encarar al Ingeniero (que debe estar en el nodo i + 1)
+        int f_ing = red_tuberias[tramo_actual + 1].fil;
+        int c_ing = red_tuberias[tramo_actual + 1].col;
+        int rumbo_obj = ObtenerRumboT(sensores.posF, sensores.posC, f_ing, c_ing);
+        
+        if (sensores.rumbo != rumbo_obj) {
+            return GirarHaciaT(sensores.rumbo, rumbo_obj);
+        }
+
+        // B. Sincronización
+        // Si el Ingeniero llegó, hizo sus ajustes de tierra y nos mira, ejecutamos a la vez.
+        if (sensores.enfrente) {
+            tramo_actual++; 
+            return INSTALL;
+        }
+        
+        return IDLE;
+    } 
+    else {
+        // NAVEGACIÓN AL OBJETIVO
+        if (plan.empty() || sensores.choque) {
+            EstadoT inicio = { {sensores.posF, sensores.posC, (Orientacion)sensores.rumbo}, tiene_zapatillas };
+            EstadoT fin = { {target_f, target_c, norte}, false }; 
+            plan = AEstrella_Nivel3(inicio, fin, mapaResultado, mapaCotas);
+        }
+
+        if (!plan.empty()) {
+            Action accion = plan.front();
+            // Escudo anti-atascos
+            if (accion == WALK && sensores.agentes[2] != '_') return IDLE;
+            plan.pop_front();
+            return accion;
+        }
+    }
+    return IDLE;
 }
 
 /**

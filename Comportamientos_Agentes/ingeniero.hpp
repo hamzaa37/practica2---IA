@@ -197,6 +197,11 @@ std::set<std::pair<int, int>> visitados;
 // nivel 2:
   bool hayPlan = false;       // para saber si ya hemos pensado la ruta
   std::list<Action> plan;     // para guardar la secuencia de acciones a realizar
+
+//nivel 5:
+std::vector<Paso> red_tuberias;
+  int tramo_actual = 0;
+  bool altura_ajustada = false;
 };
 
 

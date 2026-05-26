@@ -37,6 +37,7 @@ public:
     last_action = IDLE;
     tiene_zapatillas = false;
     giro45Izq = 0;
+    checkPos = false;
   }
 
   /**
@@ -44,11 +45,14 @@ public:
    * @param mapaR Mapa de terreno conocido
    * @param mapaC Mapa de cotas conocido
    */
-  ComportamientoTecnico(std::vector<std::vector<unsigned char>> mapaR, 
-                       std::vector<std::vector<unsigned char>> mapaC): 
+  ComportamientoTecnico(std::vector<std::vector<unsigned char>> mapaR,
+                       std::vector<std::vector<unsigned char>> mapaC):
                        Comportamiento(mapaR, mapaC) {
-    // Inicializar Variables de Estado
-
+    last_action      = IDLE;
+    tiene_zapatillas = false;
+    giro45Izq        = 0;
+    hayPlan          = false;
+    checkPos         = false;
   }
 
   ComportamientoTecnico(const ComportamientoTecnico &comport): Comportamiento(comport) {}
@@ -120,6 +124,14 @@ public:
  * @return Acción a realizar.
  */
   Action ComportamientoTecnicoNivel_6(Sensores sensores);
+
+  /**
+   * @brief Nivel ficticio E (tutorial parte 2): BFS en anchura (B_Anchura_V2)
+   * para llevar al Técnico a la Belkanita. Sirve de base para los niveles 2 y 3.
+   * @param sensores Datos actuales de los sensores.
+   * @return Acción a realizar.
+   */
+  Action ComportamientoTecnicoNivel_E(Sensores sensores);
 
 protected:
   // =========================================================================
@@ -195,8 +207,20 @@ Action last_action;
 bool tiene_zapatillas;
 int giro45Izq;
 
-// Almacena las coordenadas por las que ya hemos pasado
+// Nivel 1: casillas ya visitadas para la exploración reactiva
 std::set<std::pair<int, int>> visitados;
+
+// Niveles 2, 3, 4 y 5: plan deliberativo
+bool hayPlan = false;
+std::list<Action> plan;
+
+// Nivel 3: detección de desincronización del plan
+ubicacion posEsperada;
+bool checkPos = false;
+
+//nivel 5:
+std::vector<Paso> red_tuberias;
+int tramo_actual = 0;
   
 };
 

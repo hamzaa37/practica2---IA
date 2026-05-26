@@ -453,9 +453,145 @@ Action ComportamientoIngeniero::ComportamientoIngenieroNivel_2(Sensores sensores
  * @param sensores Datos actuales de los sensores.
  * @return Acción a realizar.
  */
+/*Action ComportamientoIngeniero::ComportamientoIngenieroNivel_3(Sensores sensores)
+{
+  return ComportamientoIngenieroNivel_1(sensores);
+}
+*/
+
 Action ComportamientoIngeniero::ComportamientoIngenieroNivel_3(Sensores sensores)
 {
-  return IDLE;
+    // Estrategia de evasión: Si vemos al Técnico cerca, nos movemos para despejar su camino.
+    bool tecnico_cerca = false;
+    for (int i = 0; i < 16; i++) {
+        if (sensores.agentes[i] == 't') {
+            tecnico_cerca = true;
+            break;
+        }
+    }
+
+    if (tecnico_cerca) {
+        char frente = sensores.superficie[2];
+        // Si el frente es seguro y no hay nadie, avanzamos para quitarnos de en medio.
+        if (frente != 'M' && frente != 'P' && frente != 'A' && sensores.agentes[2] == '_') {
+            return WALK;
+        }
+        // Si el frente está bloqueado, rotamos para buscar una salida.
+        return TURN_SR; 
+    }
+    
+    // Si el Técnico está lejos, nos quedamos quietos para ahorrar batería y no molestar.
+    return IDLE; 
+}
+
+
+// =====================================================================
+// NIVEL 4
+// =====================================================================
+
+// Representa el estado de una casilla en la construcción de tuberías
+struct NodoTuberia {
+    int f;
+    int c;
+    int altura_actual; // La altura resultante después de un posible DIG/RAISE
+    list<Paso> red;    // El plan acumulado de tuberías hasta este punto
+};
+
+// Necesario para evitar bucles. Como solo podemos alterar la altura +-1,
+// memorizamos la casilla y si usamos DIG (-1), RAISE (+1) o Nada (0)
+struct EstadoTuberia {
+    int f;
+    int c;
+    int alteracion; // -1, 0, 1
+
+    bool operator<(const EstadoTuberia& otro) const {
+        return tie(f, c, alteracion) < tie(otro.f, otro.c, otro.alteracion);
+    }
+};
+
+// Algoritmo BFS adaptado para proyectar tuberías por gravedad
+list<Paso> ProyectarRedTuberias(int inicio_f, int inicio_c, 
+                                const vector<vector<unsigned char>>& mapaR, 
+                                const vector<vector<unsigned char>>& mapaC) {
+    
+    queue<NodoTuberia> frontera;
+    set<EstadoTuberia> visitados;
+
+    int altura_inicial = mapaC[inicio_f][inicio_c];
+    
+    // El primer paso comienza en la Belkanita. Por simplicidad asumiremos que la
+    // casilla de origen de la filtración no requiere modificación (op = 0)
+    NodoTuberia inicial = {inicio_f, inicio_c, altura_inicial, {{inicio_f, inicio_c, 0}}};
+    frontera.push(inicial);
+    visitados.insert({inicio_f, inicio_c, 0});
+
+    // Desplazamientos ortogonales: Norte, Sur, Este, Oeste
+    int df[] = {-1, 1, 0, 0};
+    int dc[] = {0, 0, 1, -1};
+
+    while (!frontera.empty()) {
+        NodoTuberia actual = frontera.front();
+        frontera.pop();
+
+        // 1. ¿Hemos llegado a una planta de tratamiento?
+        if (mapaR[actual.f][actual.c] == 'U') {
+            return actual.red; // Plan completado exitosamente
+        }
+
+        // 2. Expandir a casillas ortogonales
+        for (int i = 0; i < 4; ++i) {
+            int nf = actual.f + df[i];
+            int nc = actual.c + dc[i];
+
+            // Verificación de límites del mapa
+            if (nf >= 0 && nf < mapaR.size() && nc >= 0 && nc < mapaR[0].size()) {
+                char tipo_terreno = mapaR[nf][nc];
+                
+                // Las tuberías no pueden pasar por Muros o Precipicios
+                if (tipo_terreno != 'M' && tipo_terreno != 'P') {
+                    int cota_original_destino = mapaC[nf][nc];
+
+                    // Probamos las tres posibles alteraciones permitidas:
+                    // op = 0 (Nada), op = 1 (RAISE), op = -1 (DIG)
+                    int operaciones[] = {0, 1, -1};
+                    
+                    for (int op : operaciones) {
+                        // Restricciones físicas según el guion:
+                        // No se puede hacer DIG si la altura es <= 1
+                        if (op == -1 && cota_original_destino <= 1) continue;
+                        // No se puede hacer RAISE si la altura es >= 9
+                        if (op == 1 && cota_original_destino >= 9) continue;
+                        // No se puede alterar (RAISE/DIG) el Agua ('A')
+                        if ((op == -1 || op == 1) && tipo_terreno == 'A') continue;
+
+                        int cota_final_destino = cota_original_destino + op;
+
+                        // Regla de Gravedad: La altura origen debe ser IGUAL o MAYOR (+1) que el destino
+                        int caida = actual.altura_actual - cota_final_destino;
+                        
+                        if (caida == 0 || caida == 1) { // Cumple con la gravedad
+                            EstadoTuberia nuevo_estado = {nf, nc, op};
+
+                            if (visitados.find(nuevo_estado) == visitados.end()) {
+                                visitados.insert(nuevo_estado);
+                                
+                                NodoTuberia vecino = actual;
+                                vecino.f = nf;
+                                vecino.c = nc;
+                                vecino.altura_actual = cota_final_destino;
+                                vecino.red.push_back({nf, nc, op});
+                                
+                                frontera.push(vecino);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    // Si la cola se vacía sin encontrar solución, devuelve una lista vacía
+    return list<Paso>(); 
 }
 
 /**
@@ -463,9 +599,48 @@ Action ComportamientoIngeniero::ComportamientoIngenieroNivel_3(Sensores sensores
  * @param sensores Datos actuales de los sensores.
  * @return Acción a realizar.
  */
+
 Action ComportamientoIngeniero::ComportamientoIngenieroNivel_4(Sensores sensores)
 {
-  return IDLE;
+    // Solo en el instante inicial calculamos el trazado (Nivel 4 es solo planificación)
+    if (!hayPlan) {
+        
+        // Ejecutamos el planificador partiendo desde la ubicación de la Belkanita
+        list<Paso> plan_tuberias = ProyectarRedTuberias(sensores.BelPosF, sensores.BelPosC, mapaResultado, mapaCotas);
+        
+        hayPlan = true;
+        
+        // Si hemos encontrado un plan válido, lo enviamos al visualizador para que el
+        // simulador compruebe las reglas y dé por válido el Nivel 4.
+        if (!plan_tuberias.empty()) {
+            VisualizaRedTuberias(plan_tuberias);
+        } else {
+            cout << "No se pudo encontrar una red de tuberías viable." << endl;
+        }
+    }
+
+    // En el nivel 4 los agentes no se mueven físicamente en el mapa, su tarea solo es pensar el plan.
+    return IDLE;
+}
+
+// =====================================================================
+// NIVEL 5
+// =====================================================================
+
+
+int ObtenerRumboI(int f_act, int c_act, int f_obj, int c_obj) {
+    if (f_act == f_obj && c_obj > c_act) return 2; // Este
+    if (f_act == f_obj && c_obj < c_act) return 6; // Oeste
+    if (f_obj > f_act && c_act == c_obj) return 4; // Sur
+    if (f_obj < f_act && c_act == c_obj) return 0; // Norte
+    return -1; 
+}
+
+Action GirarHaciaI(int rumbo_actual, int rumbo_objetivo) {
+    int diff = (rumbo_objetivo - rumbo_actual + 8) % 8;
+    if (diff == 0) return IDLE;
+    if (diff <= 4) return TURN_SR;
+    return TURN_SL;
 }
 
 /**
@@ -475,7 +650,72 @@ Action ComportamientoIngeniero::ComportamientoIngenieroNivel_4(Sensores sensores
  */
 Action ComportamientoIngeniero::ComportamientoIngenieroNivel_5(Sensores sensores)
 {
-  return IDLE;
+    // 1. Calculamos el plano maestro una sola vez
+    if (!hayPlan) {
+        // Aprovechamos la función del Nivel 4
+        list<Paso> plan_lista = ProyectarRedTuberias(sensores.BelPosF, sensores.BelPosC, mapaResultado, mapaCotas);
+        red_tuberias.assign(plan_lista.begin(), plan_lista.end());
+        
+        tramo_actual = 0;
+        altura_ajustada = false;
+        hayPlan = true;
+        plan.clear();
+    }
+
+    // Si ya completamos todos los tramos, hemos terminado
+    if (tramo_actual >= (int)red_tuberias.size() - 1) return IDLE;
+
+    // Objetivo del Ingeniero: Ocupar el final del tramo actual (nodo i + 1)
+    int target_f = red_tuberias[tramo_actual + 1].fil;
+    int target_c = red_tuberias[tramo_actual + 1].col;
+    int target_op = red_tuberias[tramo_actual + 1].op;
+
+    if (sensores.posF == target_f && sensores.posC == target_c) {
+        plan.clear(); // Ya llegamos, borramos el plan de navegación
+        
+        // A. Ajustar el terreno si el diseño lo exige
+        if (!altura_ajustada) {
+            altura_ajustada = true; // Solo intentamos alterar el terreno un turno
+            if (target_op == 1) return RAISE;
+            if (target_op == -1) return DIG;
+        }
+
+        // B. Rotar para encarar al Técnico (que debe estar en el nodo i)
+        int f_tec = red_tuberias[tramo_actual].fil;
+        int c_tec = red_tuberias[tramo_actual].col;
+        int rumbo_obj = ObtenerRumboI(sensores.posF, sensores.posC, f_tec, c_tec);
+        
+        if (sensores.rumbo != rumbo_obj) {
+            return GirarHaciaI(sensores.rumbo, rumbo_obj);
+        }
+
+        // C. Sincronización
+        // Si el sensor 'enfrente' está activo, el Técnico ya llegó a su sitio y nos está mirando
+        if (sensores.enfrente) {
+            tramo_actual++; // Avanzamos al siguiente segmento
+            altura_ajustada = false;
+            return INSTALL; // Soldamos la tubería
+        }
+        
+        // Si no nos mira, esperamos pacientemente
+        return IDLE; 
+    } 
+    else {
+        // NAVEGACIÓN (Buscamos la ruta al objetivo)
+        if (plan.empty() || sensores.choque) {
+            Estado inicio = {sensores.posF, sensores.posC, sensores.rumbo, tiene_zapatillas};
+            plan = BFS_Nivel2(inicio, target_f, target_c, mapaResultado, mapaCotas);
+        }
+
+        if (!plan.empty()) {
+            Action accion = plan.front();
+            // Escudo anti-desincronización (esperar si hay atasco)
+            if (accion == WALK && sensores.agentes[2] != '_') return IDLE;
+            plan.pop_front();
+            return accion;
+        }
+    }
+    return IDLE;
 }
 
 /**
